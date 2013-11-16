@@ -11,14 +11,16 @@ import org.apache.mahout.common.iterator.sequencefile.PathType;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirIterable;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 
+import by.bsuir.kslisenko.util.handler.SimpleConsoleReaderHandler;
+
 /**
  * Utility for reading mahout seqnence files 
  * @author cloudera
  */
 public class SequenceFileReaderUtil {
 	
-	public static <K extends Writable, V extends Writable> void readPartFile(String path, int rows, Configuration conf) throws IOException {
-		readPartFile(path, rows, conf, new ReaderHandler<K, V>());
+	public static <K extends Writable, V extends Writable> void readPartFileToConsole(String path, int rows, Configuration conf) throws IOException {
+		readPartFile(path, rows, conf, new SimpleConsoleReaderHandler<K, V>());
 	}
 	
 	public static <K extends Writable, V extends Writable> void readPartFile(String path, int rows, Configuration conf, ReaderHandler<K, V> handler) throws IOException {
@@ -27,8 +29,8 @@ public class SequenceFileReaderUtil {
 		iterate(new SequenceFileIterable<K, V>(new Path(path), conf), rows, handler);
 	}
 
-	public static <K extends Writable, V extends Writable> void readPartFilesInDir(String path, int rows, Configuration conf) throws IOException {
-		readPartFilesInDir(path, rows, conf, new ReaderHandler<K, V>());
+	public static <K extends Writable, V extends Writable> void readPartFilesInDirToConsole(String path, int rows, Configuration conf) throws IOException {
+		readPartFilesInDir(path, rows, conf, new SimpleConsoleReaderHandler<K, V>());
 	}
 	
 	public static <K extends Writable, V extends Writable> void readPartFilesInDir(String path, int rows, Configuration conf, ReaderHandler<K, V> handler) throws IOException {
@@ -44,7 +46,7 @@ public class SequenceFileReaderUtil {
 			if (counter++ >= rows) {
 				break;
 			}
-			handler.read(pair.getFirst(), pair.getSecond());
+			handler.read(pair.getFirst(), pair.getSecond(), System.out);
 		}
 		handler.after();
 	}
