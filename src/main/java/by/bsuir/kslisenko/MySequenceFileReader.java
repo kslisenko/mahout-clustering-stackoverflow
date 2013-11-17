@@ -1,24 +1,23 @@
 package by.bsuir.kslisenko;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.mahout.clustering.WeightedVectorWritable;
 import org.apache.mahout.clustering.kmeans.Cluster;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.Vector.Element;
 import org.apache.mahout.math.VectorWritable;
+import org.apache.mahout.utils.vectors.VectorHelper;
 import org.apache.mahout.vectorizer.collocations.llr.Gram;
 
+import bbuzz2011.stackoverflow.join.ClusteredDocument;
 import bbuzz2011.stackoverflow.preprocess.xml.PostWritable;
 import by.bsuir.kslisenko.util.ReaderHandler;
 import by.bsuir.kslisenko.util.SequenceFileReaderUtil;
@@ -30,102 +29,157 @@ import by.bsuir.kslisenko.util.handler.TextFileOutputReaderHandler;
  * Preparing and clustering data process produces several binary sequence files.
  * This utility reads and output this files data to console for better understanding what's going on.
  * 
- * @author cloudera
+ * @author kslisenko
  */
 public class MySequenceFileReader {
 
-	private static final String CLUSTERED_POINTS_PATH = "target/stackoverflow-output-base/kmeans/clusteredPoints";
+	// Max records for output to textfile
+	private static final int TEXT_FILE_MAX_ROWS = 1000000; //0
+	// Number of documents to show at console
+	private static final int DOCUMENTS_COUNT = 10;	
 
-	private static final String INITIAL_CLUSTER_PATH = "target/stackoverflow-kmeans-initial-clusters";
+	private static final String BASE = "target/stackoverflow-output-base/";
 
-	private static final int RECORDS_TO_OUT_TEXT_FILE = 1000000; //0
-
-	private static final int DOCUMENTS_COUNT = 10;
-	
-	private static final String SUBGRAMS_TXT_PATH = "target/stackoverflow-output-base/sparse/wordcount/subgrams/subgrams.txt";
-	private static final String SUBGRAMS_PATH = "target/stackoverflow-output-base/sparse/wordcount/subgrams";
-	private static final String NGRAMS_PATH = "target/stackoverflow-output-base/sparse/wordcount/ngrams";
-	private static final String FREQUENCY_FILE_PATH = "target/stackoverflow-output-base/sparse/frequency.file-0";
-	private static final String DICTIONARY_FILE_TXT_PATH = "target/stackoverflow-output-base/sparse/dictionary.file-0.txt";
-	private static final String TF_IDF_VECTORS_PATH = "target/stackoverflow-output-base/sparse/tfidf-vectors";
-	private static final String TF_VECTORS_PATH = "target/stackoverflow-output-base/sparse/tf-vectors";
-	
-	private static final String TOKENIZED_DOCUMENTS_PATH = "target/stackoverflow-output-base/sparse/tokenized-documents";
-	private static final String DICTIONARY_PATH = "target/stackoverflow-output-base/sparse/dictionary.file-0";
-	private static final String POSTS_WRITABLE_PATH = "target/stackoverflow-output-base/posts";
-	private static final String POSTS_TO_TEXT_PATH = "target/stackoverflow-output-base/posts-text";
-	private static final String FINAL_CLUSTERS_PATH = "target/stackoverflow-output-base/kmeans/clusters-2-final/part-r-00000";
-	private static final String FINAL_CLUSTERS_PATH2 = "target/stackoverflow-output-base/kmeans/clusters-2-final";
-	private static final String CLUSTERED_POSTS_PATH = "target/stackoverflow-output-base/clusteredPosts";
-
-	public static Map<Integer, String> dictionary;
+	/**
+	 * Dictionary in memory for better vectors visualization.
+	 */
+	public static String[] dictionary;
 	
 	public static void main(String[] args) throws IOException {
 		Configuration conf = new Configuration();
-		FileSystem fs = FileSystem.get(conf);
+		
+		System.setOut(new PrintStream(new FileOutputStream(new File("target/out.txt"))));
 		
 		// 1. Preprocess data
 		
 		// 1.1 StackOverflowPostXMLParserJob
 		// posts.xml -> sequence file [PostId] [PostWritable(Title Text)]
-		readProcessedPostsToPostWritable(conf);
+		// This data needed after clustering job finish for indexing. We will join posts with cluster IDs.
+		readProcessedPostsToPostWritable(conf, BASE + "posts");
 		
 		// 1.2 StackOverflowPostTextExtracterJob 
 		// sequence file [PostId] [PostWritable(Title Text)] -> sequence file [PostId] [Title+Text]
-		readProcessedPosts(conf);
+		// Source data for vectorizing and clustering
+		readProcessedPosts(conf, BASE + "posts-text");
 		
 		// 2. Vectorize data
 
 		// 2.1 Read tokenized documents
 		// For document 
-		// "What is the best way to micro-adjust a lens? I have a Canon 7D with a 50mm f/1.4 lens, and I think the auto-focus of the lens is off. How can I test and adjust this reliably?"
+		// document ["What is the best way to micro-adjust a lens? I have a Canon 7D with a 50mm f/1.4 lens, and I think the auto-focus of the lens is off. How can I test and adjust this reliably?"]
 		// Result would be [micro, adjust, lens, canon, lens, think, auto, focus, lens, test, adjust, reliably, will, approach, work, lenses, different, camera, body, other, different, options]
-		// TODO (check) So first we tokenize documents, then prepare dictionary, then do vectorizing
-		readTokenizedDocuments(conf);
+		// using org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles
+		readTokenizedDocuments(conf, BASE + "sparse/tokenized-documents");
 		
 		// 2.2 Output generated dictionary from tokenized documents
-		dictionary = readDictionary(conf);
+		// Dictionary contains all words in all documents and their IDs
+		// abandoned	0
+		// abberation	1
+		// abbreviations	2
+		// aberration	3
+		// aberrations	4
+		dictionary = readDictionary(conf, BASE + "sparse/dictionary.file-0");
+		
 
 		// 2.3 Output frequency file
 		// TODO what does this files represent?
 		// TODO at which stage does this file created?
-		readFrequencyFile(conf);
-		readDfCount(conf);		
+		readFrequencyFile(conf, BASE + "sparse/frequency.file-0");
+		readDfCount(conf, BASE + "sparse/df-count");		
 		
 		// 2.4 Output generated vectors
-		readTfVectors(conf, dictionary);
-		readTfIdfVectors(conf, dictionary);
+		// Each vector represent document
+		// TF vector [action:1.0,advantages:2.0,after:1.0,among:1.0...]
+		// IDF vector [emphasis:0.17316427777013857,fatigue:0.2023817443352598,greg:0.19089462250730813...]
+		readTfVectors(conf, BASE + "sparse/tf-vectors");
+		readTfIdfVectors(conf, BASE + "sparse/tfidf-vectors");
 		
-		// 2.5 Read ngrams and subgrams
-		readNGrams(conf);
-		readSubgrams(conf);
+		// 2.5 Read ngrams - words or couples of words with their frequency
+		// abandoned	2.0
+		// abberation	2.0
+		// abbreviations	2.0
+		// aberration	53.0
+		// aberrations	11.0
+		readNGrams(conf, BASE + "sparse/wordcount/ngrams");
+		
+		// 2.6 Read subgrams - relations between ngrams
+		// gram: aberration correction [frq=3, type=n]	 has gram: aberration [frq=53, type=h]
+		readSubgrams(conf, BASE + "sparse/wordcount/subgrams");
 		
 		// 3. Cluster data		
+		// using org.apache.mahout.clustering.kmeans.KMeansDriver
 		
 		// Clustering
 		// 3.1 Read initial clusters
-		readInitialClusters(conf);
+		// Randomly selected initial clusters. Each cluster has a centroid with common terms.
+		// [customised:0.2927406505146588,fields:0.23116300838484566,opensource:0.27911637996861227...]
+		readInitialClusters(conf, "target/stackoverflow-kmeans-initial-clusters");
 		
-		readClusteredPoints(conf);
-		readFinalClusters(conf);
+		// 3.2 Read clustered points
+		// Points represent text documents
+		readClusteredPoints(conf, BASE + "kmeans/clusteredPoints");
+		
+		// 3.3 Final clusters
+		// Same output structure after initial clusters
+		readFinalClusters(conf, BASE + "kmeans/clusters-2-final");
+		
+		// 4. Post process data
+		
+		// 4.1 Read points to clusters mapping (information taked from clisters and points files)
+		// PointToClusterMappingJob
+		readPointsToClustersMapping(conf, BASE + "pointsToClusters");
+		
+		// 4.2 Read clustered posts file
+		// ClusterJoinerJob
+		readClusteredPosts(conf, BASE + "clusteredPosts");
 	}
 
-	private static void readFinalClusters(Configuration conf) throws IOException {
-		readClusters("target/stackoverflow-output-base/kmeans/clusters-2-final", conf);
+	private static void readClusteredPosts(Configuration conf, String path) throws IOException {
+		// TODO use VectorHelper.vectorToSortedString(vector, dictionary)
+		ReaderHandler<LongWritable, ClusteredDocument> handler = new ReaderHandler<LongWritable, ClusteredDocument>() {
+			@Override
+			public void before() throws IOException {
+			}
+
+			@Override
+			public void read(LongWritable key, ClusteredDocument value, PrintStream out) throws IOException {
+				// Key = document ID
+				out.println("Key: " + key);
+				out.println("Cluster ID: " + value.getClusterId());
+				out.println("Title: " + value.getDocumentTitle());
+				out.println("Content: " + value.getDocumentContent());
+				out.println();
+			}
+
+			@Override
+			public void after() throws IOException {
+			}
+		};
+		
+		SequenceFileReaderUtil.readPartFilesInDir(path, DOCUMENTS_COUNT, conf, new ConsoleReaderHandler<LongWritable, ClusteredDocument>(handler));
+		
+		SequenceFileReaderUtil.readPartFilesInDir(path, TEXT_FILE_MAX_ROWS, conf, new TextFileOutputReaderHandler<LongWritable, ClusteredDocument>(path + "/clusteredDocuments.txt", handler));
+	}
+
+	private static void readPointsToClustersMapping(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDirToConsole(path, 20, conf);
+	}
+
+	private static void readFinalClusters(Configuration conf, String path) throws IOException {
+		readClusters(path, conf);
 	}	
 	
-	// TODO I really do not much understand what are this clustered points. Is it a full output?
-	private static void readClusteredPoints(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDirToConsole(CLUSTERED_POINTS_PATH, 10, conf);
+	private static void readClusteredPoints(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDirToConsole(path, 10, conf);
 		
 		// Write to text file
-		SequenceFileReaderUtil.readPartFilesInDir(CLUSTERED_POINTS_PATH, RECORDS_TO_OUT_TEXT_FILE, conf, new TextFileOutputReaderHandler<IntWritable, WeightedVectorWritable>(CLUSTERED_POINTS_PATH + "/points.txt"));
+		SequenceFileReaderUtil.readPartFilesInDir(path, TEXT_FILE_MAX_ROWS, conf, new TextFileOutputReaderHandler<IntWritable, WeightedVectorWritable>(path + "/points.txt"));
 	}
 
 	// TODO May be there are clusters with words and their values
 	// TODO read this file using clusterdump for better interpreting results
-	private static void readInitialClusters(Configuration conf) throws IOException {
-		readClusters(INITIAL_CLUSTER_PATH, conf);
+	private static void readInitialClusters(Configuration conf, String path) throws IOException {
+		readClusters(path, conf);
 	}
 
 	private static void readClusters(String path, Configuration conf) throws IOException {
@@ -149,17 +203,16 @@ public class MySequenceFileReader {
 		};
 		SequenceFileReaderUtil.readPartFilesInDir(path, 10, conf, new ConsoleReaderHandler<Text, Cluster>(handler));
 		
-		SequenceFileReaderUtil.readPartFilesInDir(path, RECORDS_TO_OUT_TEXT_FILE, conf, new TextFileOutputReaderHandler<Text, Cluster>(path + ".txt", handler));
+		SequenceFileReaderUtil.readPartFilesInDir(path, TEXT_FILE_MAX_ROWS, conf, new TextFileOutputReaderHandler<Text, Cluster>(path + ".txt", handler));
 	}
 
-	// TODO are there any 2-grams in this file?
-	private static void readNGrams(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDirToConsole(NGRAMS_PATH, 20, conf);
-		SequenceFileReaderUtil.readPartFilesInDir(NGRAMS_PATH, RECORDS_TO_OUT_TEXT_FILE, conf, new TextFileOutputReaderHandler(NGRAMS_PATH + "/ngrams.txt"));
+	private static void readNGrams(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDirToConsole(path, 20, conf);
+		SequenceFileReaderUtil.readPartFilesInDir(path, TEXT_FILE_MAX_ROWS, conf, new TextFileOutputReaderHandler(path + "/ngrams.txt"));
 	}
 	
 	// This is a some statistics for n-grams with weight of each world in n-gram
-	private static void readSubgrams(Configuration conf) throws IOException {
+	private static void readSubgrams(Configuration conf, String path) throws IOException {
 		ReaderHandler<Gram, Gram> gramHandler = new ReaderHandler<Gram, Gram>() {
 			@Override
 			public void before() throws IOException {
@@ -180,52 +233,34 @@ public class MySequenceFileReader {
 		};
 		
 		// Output first 20 grams to console
-		SequenceFileReaderUtil.readPartFilesInDir(SUBGRAMS_PATH, 20, conf, new ConsoleReaderHandler<Gram, Gram>(gramHandler));
+		SequenceFileReaderUtil.readPartFilesInDir(path, 20, conf, new ConsoleReaderHandler<Gram, Gram>(gramHandler));
 		
 		// Print all grams to file
-		SequenceFileReaderUtil.readPartFilesInDir(SUBGRAMS_PATH, RECORDS_TO_OUT_TEXT_FILE, conf, new TextFileOutputReaderHandler<Gram, Gram>(SUBGRAMS_TXT_PATH, gramHandler));		
+		SequenceFileReaderUtil.readPartFilesInDir(path, TEXT_FILE_MAX_ROWS, conf, new TextFileOutputReaderHandler<Gram, Gram>(path + "/subgrams.txt", gramHandler));		
 	}	
 
 	// TODO I do not understand why we need this file?
-	private static void readDfCount(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDirToConsole("target/stackoverflow-output-base/sparse/df-count", 20, conf);
+	private static void readDfCount(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDirToConsole(path, 20, conf);
 	}
 
-	private static void readTokenizedDocuments(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDirToConsole(TOKENIZED_DOCUMENTS_PATH, DOCUMENTS_COUNT, conf);
+	private static void readTokenizedDocuments(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDirToConsole(path, DOCUMENTS_COUNT, conf);
 	}
 
 	// TODO which information does this frequency file contains?
-	private static void readFrequencyFile(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFileToConsole(FREQUENCY_FILE_PATH, 20, conf);
+	private static void readFrequencyFile(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFileToConsole(path, 20, conf);
 	}
 
-	private static Map<Integer, String> readDictionary(Configuration conf) throws IOException {
-		SequenceFileReaderUtil.readPartFileToConsole(DICTIONARY_PATH, 20, conf);	
+	private static String[] readDictionary(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFileToConsole(path, 20, conf);	
 		
 		// Output dictionary to text file
-		ReaderHandler<Text, IntWritable> dictionaryToTextFileHandler = new TextFileOutputReaderHandler<Text, IntWritable>(DICTIONARY_FILE_TXT_PATH);
-		SequenceFileReaderUtil.readPartFile(DICTIONARY_PATH, RECORDS_TO_OUT_TEXT_FILE, conf, dictionaryToTextFileHandler);
+		ReaderHandler<Text, IntWritable> dictionaryToTextFileHandler = new TextFileOutputReaderHandler<Text, IntWritable>(BASE + "sparse/dictionary_text.txt");
+		SequenceFileReaderUtil.readPartFile(path, TEXT_FILE_MAX_ROWS, conf, dictionaryToTextFileHandler);
 		
-		// Output dictionary to Map for vectors visualizing
-		final Map<Integer, String> dictionary = new HashMap<Integer, String>();
-		ReaderHandler<Text, IntWritable> dictionaryToMapHandler = new ReaderHandler<Text, IntWritable>() {
-			@Override
-			public void before() throws IOException {
-			}
-			
-			@Override
-			public void read(Text key, IntWritable value, PrintStream myout) throws IOException {
-				dictionary.put(Integer.parseInt(value.toString()), key.toString());
-			}
-
-			@Override
-			public void after() throws IOException {
-			}
-		};
-		
-		SequenceFileReaderUtil.readPartFile(DICTIONARY_PATH, RECORDS_TO_OUT_TEXT_FILE, conf, dictionaryToMapHandler);
-		return dictionary;
+		return VectorHelper.loadTermDictionary(conf, BASE + "sparse/dictionary.file-*");
 	}	
 	
 	static SimpleConsoleReaderHandler<Text, VectorWritable> vectorHandler = new SimpleConsoleReaderHandler<Text, VectorWritable>() {
@@ -234,9 +269,7 @@ public class MySequenceFileReader {
 			System.out.println("Key: " + key);
 			System.out.println("Vector: " + value.get().asFormatString());
 			System.out.println("Vector + dictionary: " + printVectorWithDictionary(value.get()));
-			// Here is possible to iterate vector elements
 			// TODO What does the key represent?
-			// TODO what dows element values represent?
 		}
 	};
 	
@@ -244,22 +277,22 @@ public class MySequenceFileReader {
 		StringBuilder result = new StringBuilder();
 		for (Element element: vector) {
 			if (element.get() > 0) {
-				result.append(dictionary.get(element.index()) + "[" + element.index() + "]:" + element.get() + ",");
+				result.append(dictionary[element.index()] + "[" + element.index() + "]:" + element.get() + ",");
 			}
 		}
 		return result.toString();
 	}
 	
-	private static void readTfVectors(Configuration conf, Map<Integer, String> dictionary) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDir(TF_VECTORS_PATH, DOCUMENTS_COUNT, conf, vectorHandler);
+	private static void readTfVectors(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDir(path, DOCUMENTS_COUNT, conf, vectorHandler);
 	}	
 	
-	private static void readTfIdfVectors(Configuration conf, Map<Integer, String> dictionary) throws IOException {
-		SequenceFileReaderUtil.readPartFilesInDir(TF_IDF_VECTORS_PATH, DOCUMENTS_COUNT, conf, vectorHandler);
+	private static void readTfIdfVectors(Configuration conf, String path) throws IOException {
+		SequenceFileReaderUtil.readPartFilesInDir(path, DOCUMENTS_COUNT, conf, vectorHandler);
 	}
 
 
-	private static void readProcessedPostsToPostWritable(Configuration conf) throws IOException {
+	private static void readProcessedPostsToPostWritable(Configuration conf, String path) throws IOException {
 		SimpleConsoleReaderHandler<LongWritable, PostWritable> handler = new SimpleConsoleReaderHandler<LongWritable, PostWritable>() {
 			@Override
 			public void read(LongWritable key, PostWritable value, PrintStream myout) {
@@ -269,10 +302,10 @@ public class MySequenceFileReader {
 			}
 		};
 		
-		SequenceFileReaderUtil.readPartFilesInDir(POSTS_WRITABLE_PATH, DOCUMENTS_COUNT, conf, handler);
+		SequenceFileReaderUtil.readPartFilesInDir(path, DOCUMENTS_COUNT, conf, handler);
 	}
 	
-	private static void readProcessedPosts(Configuration conf) throws IOException {
+	private static void readProcessedPosts(Configuration conf, String path) throws IOException {
 		SimpleConsoleReaderHandler<Text, Text> handler = new SimpleConsoleReaderHandler<Text, Text>() {
 			@Override
 			public void read(Text key, Text value, PrintStream myout) {
@@ -281,6 +314,6 @@ public class MySequenceFileReader {
 			}
 		};
 		
-		SequenceFileReaderUtil.readPartFilesInDir(POSTS_TO_TEXT_PATH, DOCUMENTS_COUNT, conf, handler);
+		SequenceFileReaderUtil.readPartFilesInDir(path, DOCUMENTS_COUNT, conf, handler);
 	}	
 }

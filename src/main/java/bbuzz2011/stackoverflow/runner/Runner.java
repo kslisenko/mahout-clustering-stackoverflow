@@ -1,10 +1,7 @@
 package bbuzz2011.stackoverflow.runner;
 
-import bbuzz2011.stackoverflow.index.PostIndexer;
-import bbuzz2011.stackoverflow.join.ClusterJoinerJob;
-import bbuzz2011.stackoverflow.join.PointToClusterMappingJob;
-import bbuzz2011.stackoverflow.preprocess.text.StackOverflowPostTextExtracterJob;
-import bbuzz2011.stackoverflow.preprocess.xml.StackOverflowPostXMLParserJob;
+import java.io.IOException;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.util.ToolRunner;
@@ -15,8 +12,20 @@ import org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
 
-import java.io.IOException;
+import bbuzz2011.stackoverflow.index.PostIndexer;
+import bbuzz2011.stackoverflow.join.ClusterJoinerJob;
+import bbuzz2011.stackoverflow.join.PointToClusterMappingJob;
+import bbuzz2011.stackoverflow.preprocess.text.StackOverflowPostTextExtracterJob;
+import bbuzz2011.stackoverflow.preprocess.xml.StackOverflowPostXMLParserJob;
 
+/**
+ * Runs clustering job:
+ * 1. Prepare data
+ * 2. Vectorize
+ * 3. Run Clustering
+ * 4. Post process
+ * 5. Send to Lucene 
+ */
 public class Runner {
 
     private Configuration configuration = new Configuration();
@@ -59,31 +68,44 @@ public class Runner {
     }
 
     private void preProcess() throws ClassNotFoundException, IOException, InterruptedException {
-        outputSeq2SparsePath = new Path(outputBasePath, "sparse");
-        outputVectorPath = new Path(outputSeq2SparsePath, "tfidf-vectors");
-        outputDictionaryPattern = new Path(outputSeq2SparsePath, "dictionary.file-*").toString();
-
-        configuration.set(StackOverflowPostXMLParserJob.INPUT, "src/main/resources/posts-small.xml");
+        configuration.set(StackOverflowPostXMLParserJob.INPUT, "src/main/resources/posts-real.xml");
         configuration.set(StackOverflowPostXMLParserJob.OUTPUT, outputBasePath.toString());
 
+        // Parse posts.xml to sequence file [PostId] [PostWritable(Title, Text)]
+        // We need this information later after clustering finish. We'll join it with clustered IDs.
         StackOverflowPostXMLParserJob parseJob = new StackOverflowPostXMLParserJob(configuration);
         outputPostsPath = parseJob.parseXML();
 
         configuration.set(StackOverflowPostTextExtracterJob.INPUT, new Path(outputBasePath, StackOverflowPostXMLParserJob.OUTPUT_POSTS_PATH).toString());
         configuration.set(StackOverflowPostTextExtracterJob.OUTPUT, outputBasePath.toString());
 
+        // Parse sequence file [PostId] [PostWritable(Title, Text)] to sequence file [PostId] [Title+Text] format
+        // Result of this job will go to vectorizing and clustering job
         StackOverflowPostTextExtracterJob extracterJob = new StackOverflowPostTextExtracterJob(configuration);
         extracterJob.run();
     }
 
+    /**
+     * Convert sequence file with posts to vectors
+     * @throws Exception
+     */
     private void vectorize() throws Exception {
+        outputSeq2SparsePath = new Path(outputBasePath, "sparse");
+        outputVectorPath = new Path(outputSeq2SparsePath, "tfidf-vectors");
+        outputDictionaryPattern = new Path(outputSeq2SparsePath, "dictionary.file-*").toString();    	
+    	
         String[] seq2SparseArgs = new String[]{
                 "--input", new Path(outputBasePath, StackOverflowPostTextExtracterJob.OUTPUT_POSTS_TEXT).toString(),
                 "--output", outputSeq2SparsePath.toString(),
+                // Maximum size of word groups, which are often together and represent one item (Coca Cola, Unit Testing, Continuous Integration)
+                // 2 for better clustering and not very large calculation
                 "--maxNGramSize", "2",
                 "--namedVector",
+                // Maximum document frequency percentage. All terms grater this value will be kicked.
+                // Also minimum document frequency could be specified.
                 "--maxDFPercent", "25",
                 "--norm", "2",
+                // Plug-in our Apache Lucene analyzer for filtering content (removing stop-words, etc.)
                 "--analyzerName", "bbuzz2011.stackoverflow.StackOverflowAnalyzer",
                 "--overwrite"
         };
@@ -96,6 +118,7 @@ public class Runner {
 
         Path outputKMeansPath = new Path(outputBasePath, algorithmSuffix);
 
+        // TODO where are initial clusters generated?
         String[] kmeansDriver = {
                 "--input", outputVectorPath.toString(),
                 "--output", outputKMeansPath.toString(),
@@ -116,6 +139,7 @@ public class Runner {
         Path clusteredPointsPath = new Path(outputClusteringPath, "clusteredPoints");
         Path outputFinalClustersPath = new Path(outputClusteringPath, "clusters-*-final/*");
         Path pointsToClusterPath = new Path(outputBasePath, "pointsToClusters");
+        // TODO I detected bug here. In original source Path clusteredPostsPath = new Path(outputBasePath, "clusteredPosts"); 
         Path clusteredPostsPath = new Path(outputBasePath, "clusteredPosts");
 
         PointToClusterMappingJob pointsToClusterMappingJob = new PointToClusterMappingJob(clusteredPointsPath, pointsToClusterPath);
@@ -126,7 +150,7 @@ public class Runner {
         clusterJoinerJob.setConf(configuration);
         clusterJoinerJob.run();
 
-        PostIndexer postIndexer = new PostIndexer(clusteredPostsPath, outputFinalClustersPath, outputDictionaryPattern, solrClient);
+        PostIndexer postIndexer = new PostIndexer(new Path(outputBasePath, "clusteredPosts/*"), outputFinalClustersPath, outputDictionaryPattern, solrClient);
         postIndexer.setConf(configuration);
         postIndexer.buildIndex();
     }

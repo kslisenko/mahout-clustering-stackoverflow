@@ -14,8 +14,8 @@ import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import by.bsuir.kslisenko.util.handler.SimpleConsoleReaderHandler;
 
 /**
- * Utility for reading mahout seqnence files 
- * @author cloudera
+ * Utility for reading mahout sequence files 
+ * @author kslisenko
  */
 public class SequenceFileReaderUtil {
 	

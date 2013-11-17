@@ -7,18 +7,22 @@ import org.apache.hadoop.mapreduce.Mapper;
 
 import java.io.IOException;
 
+/**
+ * Prepares posts content for clustering. Extracts title + text into sequence file
+ * file [PostId] [Title+Text] 
+ */
 public class StackOverflowPostTextMapper extends Mapper<LongWritable, PostWritable, Text, Text> {
 
-  private Text id = new Text();
-  private Text text = new Text();
+	private Text id = new Text();
+	private Text text = new Text();
 
-  @Override
-  protected void map(LongWritable key, PostWritable value, Context context) throws IOException, InterruptedException {
-    id.set(String.valueOf(key.get()));
+	@Override
+	protected void map(LongWritable key, PostWritable value, Context context) throws IOException, InterruptedException {
+		id.set(String.valueOf(key.get()));
 
-    StringBuilder builder = new StringBuilder(value.getTitle()).append("\n\n").append(value.getContent());
-    text.set(builder.toString());
+		StringBuilder builder = new StringBuilder(value.getTitle()).append("\n\n").append(value.getContent());
+		text.set(builder.toString());
 
-    context.write(id, text);
-  }
+		context.write(id, text);
+	}
 }

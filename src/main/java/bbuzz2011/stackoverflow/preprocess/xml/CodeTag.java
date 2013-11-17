@@ -4,20 +4,20 @@ import org.htmlparser.tags.CompositeTag;
 
 public class CodeTag extends CompositeTag {
 
-  private static final String[] ids = new String[]{"CODE"};
+	private static final String[] ids = new String[] { "CODE" };
 
-  public CodeTag() {
-  }
+	public CodeTag() {
+	}
 
-  public String[] getIds() {
-    return (ids);
-  }
+	public String[] getIds() {
+		return (ids);
+	}
 
-  public String[] getEnders() {
-    return (ids);
-  }
+	public String[] getEnders() {
+		return (ids);
+	}
 
-  public String[] getEndTagEnders() {
-    return (new String[0]);
-  }
+	public String[] getEndTagEnders() {
+		return (new String[0]);
+	}
 }

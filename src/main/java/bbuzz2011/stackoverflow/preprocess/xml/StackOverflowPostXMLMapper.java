@@ -33,97 +33,106 @@ import java.io.StringReader;
 
 /**
  * Turns posts from a StackOverflow posts.xml file into the following output.
- *
+ * 
  * Pairs of (post id, content)
- *
- * so they can be processed by {@link org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles}
+ * 
+ * so they can be processed by
+ * {@link org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles}
  */
 public class StackOverflowPostXMLMapper extends Mapper<LongWritable, Text, LongWritable, PostWritable> {
 
-  public enum Counter {
-    MISSING_TITLES, TITLES, QUESTIONS
-  }
+	public enum Counter {
+		MISSING_TITLES, TITLES, QUESTIONS
+	}
 
-  private static final String QUESTION_TYPE = "1";
+	private static final String QUESTION_TYPE = "1";
 
-  public static String XPATH_ROW_BODY = "/row/@Body";
-  public static String XPATH_TITLE = "/row/@Title";
-  public static String XPATH_POST_TYPE = "/row/@PostTypeId";
+	public static String XPATH_ROW_BODY = "/row/@Body";
+	public static String XPATH_TITLE = "/row/@Title";
+	public static String XPATH_POST_TYPE = "/row/@PostTypeId";
 
-  private XPathExpression postBodyXPath;
-  private XPathExpression postTitleXPath;
-  private XPathExpression postTypeXPath;
+	private XPathExpression postBodyXPath;
+	private XPathExpression postTitleXPath;
+	private XPathExpression postTypeXPath;
 
-  private DocumentBuilder documentBuilder;
-  private StackOverflowPostBodyHtmlParser parser;
+	private DocumentBuilder documentBuilder;
+	private StackOverflowPostBodyHtmlParser parser;
 
-  private LongWritable postKey = new LongWritable();
-  private PostWritable postWritable = new PostWritable();
+	private LongWritable postKey = new LongWritable();
+	private PostWritable postWritable = new PostWritable();
 
-  @Override
-  public void setup(Context context) throws IOException, InterruptedException {
-    try {
-      initializeParsers();
-    } catch (ParserConfigurationException e) {
-      throw new RuntimeException("Could not initialize XPath", e);
-    } catch (XPathExpressionException e) {
-      throw new RuntimeException("Could not initialize XPath", e);
-    }
-  }
+	@Override
+	public void setup(Context context) throws IOException, InterruptedException {
+		try {
+			initializeParsers();
+		} catch (ParserConfigurationException e) {
+			throw new RuntimeException("Could not initialize XPath", e);
+		} catch (XPathExpressionException e) {
+			throw new RuntimeException("Could not initialize XPath", e);
+		}
+	}
 
-  @Override
-  public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-    try {
-      writePostBody(key, value, context);
-    } catch (SAXException e) {
-      throw new RuntimeException("Could not parse post", e);
-    } catch (XPathExpressionException e) {
-      throw new RuntimeException("Could not parse post", e);
-    }
-  }
+	@Override
+	public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+		try {
+			writePostBody(key, value, context);
+		} catch (SAXException e) {
+			throw new RuntimeException("Could not parse post", e);
+		} catch (XPathExpressionException e) {
+			throw new RuntimeException("Could not parse post", e);
+		}
+	}
 
-  //========================================== Helper Methods ==========================================================
+	// ========================================== Helper Methods
+	// ==========================================================
 
-  private void initializeParsers() throws XPathExpressionException, ParserConfigurationException {
-    XPathFactory factory = XPathFactory.newInstance();
-    XPath xpath = factory.newXPath();
-    postBodyXPath = xpath.compile(XPATH_ROW_BODY);
-    postTitleXPath = xpath.compile(XPATH_TITLE);
-    postTypeXPath = xpath.compile(XPATH_POST_TYPE);
+	private void initializeParsers() throws XPathExpressionException, ParserConfigurationException {
+		XPathFactory factory = XPathFactory.newInstance();
+		XPath xpath = factory.newXPath();
+		postBodyXPath = xpath.compile(XPATH_ROW_BODY);
+		postTitleXPath = xpath.compile(XPATH_TITLE);
+		postTypeXPath = xpath.compile(XPATH_POST_TYPE);
 
-    DocumentBuilderFactory domFactory = DocumentBuilderFactory.newInstance();
-    domFactory.setNamespaceAware(true);
-    documentBuilder = domFactory.newDocumentBuilder();
+		DocumentBuilderFactory domFactory = DocumentBuilderFactory.newInstance();
+		domFactory.setNamespaceAware(true);
+		documentBuilder = domFactory.newDocumentBuilder();
 
-    parser = new StackOverflowPostBodyHtmlParser();
-  }
+		parser = new StackOverflowPostBodyHtmlParser();
+	}
 
-  private void writePostBody(LongWritable key, Text value, Context context) throws SAXException, IOException, XPathExpressionException, InterruptedException {
-    context.getCounter(StackOverflowPostXMLMapper.Counter.TITLES).increment(1);
+	private void writePostBody(LongWritable key, Text value, Context context) throws SAXException, IOException, XPathExpressionException, InterruptedException {
+		// TODO Where counters used? May be for some statistics?
+		// Are counters global and atomic for all mappers?
+		// Where do them output?
+		context.getCounter(StackOverflowPostXMLMapper.Counter.TITLES).increment(1);
 
-    Document doc = documentBuilder.parse(new InputSource(new StringReader(value.toString())));
+		Document doc = documentBuilder.parse(new InputSource(new StringReader(value.toString())));
 
-    String title = (String) postTitleXPath.evaluate(doc, XPathConstants.STRING);
-    if (title == null || title.equals("")) {
-      context.getCounter(Counter.MISSING_TITLES).increment(1);
-      return;
-    }
+		// Retrieve title from xml post using xpath
+		String title = (String) postTitleXPath.evaluate(doc,XPathConstants.STRING);
+		if (title == null || title.equals("")) {
+			context.getCounter(Counter.MISSING_TITLES).increment(1);
+			return;
+		}
 
-    String postHtml = (String) postBodyXPath.evaluate(doc, XPathConstants.STRING);
-    String content = parser.parsePostContent(postHtml);
+		String postHtml = (String) postBodyXPath.evaluate(doc,XPathConstants.STRING);
+		String content = parser.parsePostContent(postHtml);
 
-    postKey.set((int) key.get());
+		// TODO Why not stackexchange post Id attribute?
+		postKey.set((int) key.get());
 
-    postWritable.setTitle(title);
-    postWritable.setContent(content);
+		postWritable.setTitle(title);
+		postWritable.setContent(content);
 
-    if (isQuestion(doc)) {
-      context.getCounter(Counter.QUESTIONS).increment(1);
-      context.write(postKey, postWritable);
-    }
-  }
+		// Retrieve questions, not answers
+		// TODO as improvement we can combine question and answers as single document for better clustering.
+		if (isQuestion(doc)) {
+			context.getCounter(Counter.QUESTIONS).increment(1);
+			context.write(postKey, postWritable);
+		}
+	}
 
-  private boolean isQuestion(Document doc) throws XPathExpressionException {
-    return QUESTION_TYPE.equals(postTypeXPath.evaluate(doc, XPathConstants.STRING));
-  }
+	private boolean isQuestion(Document doc) throws XPathExpressionException {
+		return QUESTION_TYPE.equals(postTypeXPath.evaluate(doc, XPathConstants.STRING));
+	}
 }

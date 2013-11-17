@@ -13,32 +13,32 @@ import java.io.IOException;
 
 public class PointToClusterMappingJob extends Configured {
 
-  private Path clusteredPointsPath;
-  private Path pointsToClusterPath;
+	private Path clusteredPointsPath;
+	private Path pointsToClusterPath;
 
-  public PointToClusterMappingJob(Path clusteredPointsPath, Path pointsToClusterPath) {
-    this.clusteredPointsPath = clusteredPointsPath;
-    this.pointsToClusterPath = pointsToClusterPath;
-  }
+	public PointToClusterMappingJob(Path clusteredPointsPath, Path pointsToClusterPath) {
+		this.clusteredPointsPath = clusteredPointsPath;
+		this.pointsToClusterPath = pointsToClusterPath;
+	}
 
-  public void mapPointsToClusters() throws IOException, ClassNotFoundException, InterruptedException {
-    Configuration configuration = getConf();
+	public void mapPointsToClusters() throws IOException, ClassNotFoundException, InterruptedException {
+		Configuration configuration = getConf();
 
-    Job job = new Job(configuration, PointToClusterMappingJob.class.getSimpleName());
-    job.setInputFormatClass(SequenceFileInputFormat.class);
-    job.setOutputFormatClass(SequenceFileOutputFormat.class);
-    job.setJarByClass(PointToClusterMappingJob.class);
+		Job job = new Job(configuration, PointToClusterMappingJob.class.getSimpleName());
+		job.setInputFormatClass(SequenceFileInputFormat.class);
+		job.setOutputFormatClass(SequenceFileOutputFormat.class);
+		job.setJarByClass(PointToClusterMappingJob.class);
 
-    SequenceFileInputFormat.addInputPath(job, clusteredPointsPath);
-    SequenceFileOutputFormat.setOutputPath(job, pointsToClusterPath);
+		SequenceFileInputFormat.addInputPath(job, clusteredPointsPath);
+		SequenceFileOutputFormat.setOutputPath(job, pointsToClusterPath);
 
-    job.setMapperClass(PointToClusterMapper.class);
+		job.setMapperClass(PointToClusterMapper.class);
 
-    job.setNumReduceTasks(1);
+		job.setNumReduceTasks(1);
 
-    job.setOutputKeyClass(LongWritable.class);
-    job.setOutputValueClass(IntWritable.class);
+		job.setOutputKeyClass(LongWritable.class);
+		job.setOutputValueClass(IntWritable.class);
 
-    job.waitForCompletion(true);
-  }
+		job.waitForCompletion(true);
+	}
 }
