@@ -123,9 +123,12 @@ public class Runner {
                 "--input", outputVectorPath.toString(),
                 "--output", outputKMeansPath.toString(),
                 "--clusters", "target/stackoverflow-kmeans-initial-clusters",
+                // Max iterations number
                 "--maxIter", "10",
+                // Make 250 initial clusters
                 "--numClusters", "250",
                 "--distanceMeasure", CosineDistanceMeasure.class.getName(),
+                // TODO may be run input vector clustering after computing Canopies?
                 "--clustering",
                 "--method", "sequential",
                 "--overwrite"
